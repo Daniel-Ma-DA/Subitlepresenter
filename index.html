@@ -20,7 +20,6 @@
             bottom: 0;
             display: flex;
             flex-direction: column;
-            background: rgba(0, 0, 0, 0.5);
             resize: both;
             overflow: auto;
         }
@@ -35,11 +34,22 @@
         /* Anzeige für den Untertiteltext */
         #subtitleDisplay {
             flex: 1;
+            display: flex;
+            justify-content: flex-start; /* links ausrichten */
+            align-items: center;         /* vertikal zentrieren */
             padding: 20px;
-            text-align: center;
+            background: transparent;     /* Hintergrund raus, wird auf Text gelegt */
+        }
+
+        #subtitleText {
+            display: inline-block;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.5); /* Hintergrund nur um den Text */
+            border-radius: 6px;
             font-size: 24px;
             word-wrap: break-word;
         }
+
         /* Steuerleiste unten – keine Dragregion */
         #controls {
             padding: 10px;
@@ -63,8 +73,11 @@
 </head>
 <body>
 <div id="container">
-    <div id="dragbar">Fenster verschieben</div>
-    <div id="subtitleDisplay">Untertitel werden hier angezeigt</div>
+    <div id="dragbar">Verschieben</div>
+    <div id="subtitleDisplay">
+        <div id="subtitleText">Untertitel werden hier angezeigt</div>
+    </div>
+
     <div id="controls">
         <input type="file" id="fileInput" accept=".srt">
         <button id="playPause">Pause</button>
@@ -143,6 +156,7 @@
 
     // Liefert die aktuelle Wiedergabezeit in Sekunden
     function getCurrentTime() {
+        timeOffset=0;
         if (isPlaying) {
             return pausedTime + ((Date.now() - playbackStart) / 1000) + timeOffset;
         } else {
@@ -178,7 +192,7 @@
     // Aktualisiert die Anzeige des Untertitels und des Zeitstempels.
     // Zeigt den aktuellen Untertitel an, bis der nächste beginnt.
     function updateSubtitle(currentTime) {
-        const display = document.getElementById('subtitleDisplay');
+        const display = document.getElementById('subtitleText');
         if (subtitles.length === 0) return;
         const current = subtitles[currentSubtitleIndex];
         let nextSubtitle = subtitles[currentSubtitleIndex + 1];
@@ -201,10 +215,12 @@
             isPlaying = false;
             this.textContent = 'Play';
         } else {
-            playbackStart = Date.now();
+            playbackStart = Date.now() - pausedTime * 1000;
+            pausedTime = 0;
             isPlaying = true;
             this.textContent = 'Pause';
             resetSubtitleInterval();
+
         }
     });
 

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Untertitel Desktop App</title>
+    <style>
+        body {
+            margin: 0;
+            background: transparent;
+            overflow: hidden;
+            font-family: sans-serif;
+            color: #fff;
+        }
+        /* Container des Fensters */
+        #container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            resize: both;
+            overflow: auto;
+        }
+        /* Dragbar: Zum Verschieben des Fensters */
+        #dragbar {
+            height: 30px;
+            background: rgba(50, 50, 50, 0.8);
+            padding: 5px;
+            cursor: move;
+            -webkit-app-region: drag;
+        }
+        /* Anzeige für den Untertiteltext */
+        #subtitleDisplay {
+            flex: 1;
+            display: flex;
+            justify-content: flex-start; /* links ausrichten */
+            align-items: center;         /* vertikal zentrieren */
+            padding: 20px;
+            background: transparent;     /* Hintergrund raus, wird auf Text gelegt */
+        }
+
+        #subtitleText {
+            display: inline-block;
+            padding: 6px 12px;
+            background: rgba(0, 0, 0, 0.5); /* Hintergrund nur um den Text */
+            border-radius: 6px;
+            font-size: 24px;
+            word-wrap: break-word;
+        }
+
+        /* Steuerleiste unten – keine Dragregion */
+        #controls {
+            padding: 10px;
+            background: rgba(30, 30, 30, 0.8);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            -webkit-app-region: no-drag;
+        }
+        #controls button, #controls input[type="range"], #fileInput {
+            cursor: pointer;
+        }
+        /* Elemente, die nach Inaktivität ausgeblendet werden */
+        #dragbar, #controls, #fileInput {
+            transition: opacity 0.5s;
+        }
+        .hidden {
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+<div id="container">
+    <div id="dragbar">Fenster verschieben</div>
+    <div id="subtitleDisplay">
+        <div id="subtitleText">Untertitel werden hier angezeigt</div>
+    </div>
+
+    <div id="controls">
+        <input type="file" id="fileInput" accept=".srt">
+        <button id="playPause">Pause</button>
+        <!-- Der Slider zeigt die aktuelle Zeit in Sekunden -->
+        <input type="range" id="timeSlider" min="0" max="100" value="0" style="width: 200px;">
+        <span id="timestamp">00:00:00</span>
+    </div>
+</div>
+
+<script>
+    // Automatisches Ausblenden der Steuerelemente
+    let hideTimeout;
+    function resetHideTimer() {
+        document.getElementById('dragbar').classList.remove('hidden');
+        document.getElementById('controls').classList.remove('hidden');
+        document.getElementById('fileInput').classList.remove('hidden');
+        clearTimeout(hideTimeout);
+        hideTimeout = setTimeout(() => {
+            document.getElementById('dragbar').classList.add('hidden');
+            document.getElementById('controls').classList.add('hidden');
+            document.getElementById('fileInput').classList.add('hidden');
+        }, 2000);
+    }
+    document.addEventListener('mousemove', resetHideTimer);
+    resetHideTimer();
+
+    // Variablen für Untertitel-Handling
+    let subtitles = [];
+    let currentSubtitleIndex = 0;
+    let isPlaying = true;
+    let subtitleInterval;
+    let playbackStart = null;  // Zeitpunkt, an dem aktuell gespielt wird
+    let pausedTime = 0;        // Gespeicherte verstrichene Zeit in Sekunden (bei Pause)
+    let timeOffset = 0;        // Zeitverschiebung (via Pfeiltasten)
+    let totalDuration = 0;     // Gesamtdauer, basierend auf dem letzten Untertitel
+
+    // SRT-Parser
+    function parseSRT(data) {
+        const subs = [];
+        const regex = /(\d+)\s+(\d{2}:\d{2}:\d{2},\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2},\d{3})\s+([\s\S]*?)(?=\n\n|\n*$)/g;
+        let match;
+        while ((match = regex.exec(data)) !== null) {
+            subs.push({
+                index: parseInt(match[1]),
+                start: toSeconds(match[2]),
+                end: toSeconds(match[3]),
+                text: match[4].trim()
+            });
+        }
+        return subs;
+    }
+    function toSeconds(timeStr) {
+        const parts = timeStr.split(/[:,]/);
+        return (+parts[0]) * 3600 + (+parts[1]) * 60 + (+parts[2]) + (+parts[3]) / 1000;
+    }
+
+    // Datei auswählen und SRT laden
+    document.getElementById('fileInput').addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = ev => {
+                subtitles = parseSRT(ev.target.result);
+                if (subtitles.length > 0) {
+                    totalDuration = subtitles[subtitles.length - 1].end;
+                    document.getElementById('timeSlider').max = totalDuration;
+                }
+                currentSubtitleIndex = 0;
+                pausedTime = 0;
+                playbackStart = Date.now();
+                resetSubtitleInterval();
+            };
+            reader.readAsText(file);
+        }
+    });
+
+    // Liefert die aktuelle Wiedergabezeit in Sekunden
+    function getCurrentTime() {
+        timeOffset=0;
+        if (isPlaying) {
+            return pausedTime + ((Date.now() - playbackStart) / 1000) + timeOffset;
+        } else {
+            return pausedTime + timeOffset;
+        }
+    }
+
+    // Aktualisiert den aktuellen Untertitel-Index:
+    // Der Untertitel bleibt sichtbar, bis der nächste startet.
+    function updateCurrentSubtitleIndex(currentTime) {
+        for (let i = 0; i < subtitles.length; i++) {
+            let nextSubtitle = subtitles[i + 1];
+            if (currentTime >= subtitles[i].start && (!nextSubtitle || currentTime < nextSubtitle.start)) {
+                currentSubtitleIndex = i;
+                return;
+            }
+        }
+        currentSubtitleIndex = subtitles.length - 1;
+    }
+
+    // Startet den Timer zur regelmäßigen Aktualisierung der Wiedergabe
+    function resetSubtitleInterval() {
+        clearInterval(subtitleInterval);
+        subtitleInterval = setInterval(() => {
+            if (!isPlaying || subtitles.length === 0) return;
+            let currentTime = getCurrentTime();
+            updateCurrentSubtitleIndex(currentTime);
+            updateSubtitle(currentTime);
+            document.getElementById('timeSlider').value = currentTime;
+        }, 100);
+    }
+
+    // Aktualisiert die Anzeige des Untertitels und des Zeitstempels.
+    // Zeigt den aktuellen Untertitel an, bis der nächste beginnt.
+    function updateSubtitle(currentTime) {
+        const display = document.getElementById('subtitleText');
+        if (subtitles.length === 0) return;
+        const current = subtitles[currentSubtitleIndex];
+        let nextSubtitle = subtitles[currentSubtitleIndex + 1];
+        if (currentTime >= current.start && (!nextSubtitle || currentTime < nextSubtitle.start)) {
+            display.textContent = current.text;
+        } else {
+            display.textContent = "";
+        }
+        const timestamp = document.getElementById('timestamp');
+        let date = new Date(null);
+        date.setSeconds(currentTime);
+        timestamp.textContent = date.toISOString().substr(11, 8);
+    }
+
+    // Play/Pause-Button: Speichert beim Pausieren die aktuelle Zeit und startet beim Fortsetzen
+    document.getElementById('playPause').addEventListener('click', function() {
+        if (isPlaying) {
+            pausedTime = getCurrentTime();
+            clearInterval(subtitleInterval);
+            isPlaying = false;
+            this.textContent = 'Play';
+        } else {
+            playbackStart = Date.now() - pausedTime * 1000;
+            pausedTime = 0;
+            isPlaying = true;
+            this.textContent = 'Pause';
+            resetSubtitleInterval();
+
+        }
+    });
+
+    // Zeitschieberegler: Setzt die Wiedergabezeit, pausiert und aktualisiert die Anzeige
+    const timeSlider = document.getElementById('timeSlider');
+    timeSlider.addEventListener('input', function() {
+        if (subtitles.length === 0) return;
+        pausedTime = parseFloat(this.value);
+        isPlaying = false;
+        document.getElementById('playPause').textContent = 'Play';
+        updateCurrentSubtitleIndex(pausedTime + timeOffset);
+        updateSubtitle(pausedTime + timeOffset);
+    });
+
+    // Pfeiltasten: Zeitverschiebung (timeOffset anpassen)
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowLeft') {
+            timeOffset -= 0.5;
+            updateSubtitle(getCurrentTime());
+        } else if (e.key === 'ArrowRight') {
+            timeOffset += 0.5;
+            updateSubtitle(getCurrentTime());
+        }
+    });
+</script>
+</body>
+</html>
